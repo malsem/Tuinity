@@ -1140,7 +1140,7 @@ index ac82f1791ce07e9a23cf97ca34974ab25e26be46..22ec19fa5b1624bdc8e1066e206ba4cc
              }
          }
 diff --git a/src/main/java/net/minecraft/server/PlayerChunkMap.java b/src/main/java/net/minecraft/server/PlayerChunkMap.java
-index 16779ffa00caf32752170700e1d88092802fa932..505594236571e4fe6f6bad0c9a0e0ed6b7a9ec5d 100644
+index 16779ffa00caf32752170700e1d88092802fa932..816e98392ea76989d562ed5227eaa821478cc5df 100644
 --- a/src/main/java/net/minecraft/server/PlayerChunkMap.java
 +++ b/src/main/java/net/minecraft/server/PlayerChunkMap.java
 @@ -180,20 +180,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
@@ -1317,7 +1317,7 @@ index 16779ffa00caf32752170700e1d88092802fa932..505594236571e4fe6f6bad0c9a0e0ed6
 -                this.updateMaps(player);
 -            }
 -        }
-+        this.playerChunkManager.setLoadDistance(viewDistance + 1); // Tuinity - replace player loader system - add 1 here, we need an extra one to send to clients for chunks in this viewDistance to render
++        this.playerChunkManager.setLoadDistance(viewDistance == -1 ? -1 : viewDistance + 1); // Tuinity - replace player loader system - add 1 here, we need an extra one to send to clients for chunks in this viewDistance to render
      }
      // Paper end - no-tick view distance
  
