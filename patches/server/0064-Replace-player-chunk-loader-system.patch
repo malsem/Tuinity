@@ -28,10 +28,10 @@ index 5dfa0658838c4801cdf260eae8b98163f729e5af..63aa58ee2a72588b3974e169b8ddfc01
  
 diff --git a/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681bc7c2d63
+index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40057325ef
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
-@@ -0,0 +1,843 @@
+@@ -0,0 +1,826 @@
 +package com.tuinity.tuinity.chunk;
 +
 +import com.destroystokyo.paper.util.misc.PlayerAreaMap;
@@ -569,8 +569,8 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +
 +    protected static final class PlayerLoaderData {
 +
-+        // TODO check this
-+        protected static final float FOV = 140.0f;
++        protected static final float FOV = 110.0f;
++        protected static final double PRIORITISED_DISTANCE = 12.0 * 16.0;
 +
 +        // Player max sprint speed is approximately 8m/s
 +        protected static final double LOOK_PRIORITY_SPEED_THRESHOLD = (10.0/20.0) * (10.0/20.0);
@@ -674,18 +674,18 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +            final double d = (p2z - p3z)*(p1x - p3x) + (p3x - p2x)*(p1z - p3z);
 +            final double a = ((p2z - p3z)*(targetX - p3x) + (p3x - p2x)*(targetZ - p3z)) / d;
 +
-+            if (a < 0.0) {
++            if (a < 0.0 || a > 1.0) {
 +                return false;
 +            }
 +
 +            final double b = ((p3z - p1z)*(targetX - p3x) + (p1x - p3x)*(targetZ - p3z)) / d;
-+            if (b < 0.0) {
++            if (b < 0.0 || b > 1.0) {
 +                return false;
 +            }
 +
 +            final double c = 1.0 - a - b;
 +
-+            return c >= 0.0;
++            return c >= 0.0 && c <= 1.0;
 +        }
 +
 +        public void remove() {
@@ -707,7 +707,8 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +            final float yaw = MCUtil.normalizeYaw(this.player.yaw + 90.0f); // mc yaw 0 is along the positive z axis, but obviously this is really dumb - offset so we are at positive x-axis
 +
 +            // in general, we really only want to prioritise chunks in front if we know we're moving pretty fast into them.
-+            final boolean useLookPriority = this.player.getMot().magnitudeXZSquared() > LOOK_PRIORITY_SPEED_THRESHOLD;
++            final boolean useLookPriority = this.player.getMot().magnitudeXZSquared() > LOOK_PRIORITY_SPEED_THRESHOLD ||
++                    this.player.abilities.isFlying;
 +
 +            // make sure we're in the send queue
 +            this.loader.chunkSendQueue.add(this);
@@ -718,15 +719,15 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +                            && loadViewDistance == this.lastLoadDistance
 +                            && tickViewDistance == this.lastTickDistance
 +
-+                            && this.usingLookingPriority ? (
-+                                    // has our block stayed the same (this also accounts for chunk center change)?
++                            && (this.usingLookingPriority ? (
++                                    // has our block stayed the same (this also accounts for chunk change)?
 +                                    MathHelper.floor(this.lastLocX) == MathHelper.floor(posX)
 +                                    && MathHelper.floor(this.lastLocZ) == MathHelper.floor(posZ)
 +                            ) : (
 +                                    // has our chunk stayed the same
 +                                    (MathHelper.floor(this.lastLocX) >> 4) == (MathHelper.floor(posX) >> 4)
 +                                    && (MathHelper.floor(this.lastLocZ) >> 4) == (MathHelper.floor(posZ) >> 4)
-+                            )
++                            ))
 +
 +                            // has our decision about look priority changed?
 +                            && this.usingLookingPriority == useLookPriority
@@ -753,6 +754,8 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +            this.lastYaw = yaw;
 +            this.lastSendDistance = sendViewDistance;
 +            this.lastLoadDistance = loadViewDistance;
++            this.lastTickDistance = tickViewDistance;
++            this.usingLookingPriority = useLookPriority;
 +
 +            this.lastChunkX = centerChunkX;
 +            this.lastChunkZ = centerChunkZ;
@@ -763,37 +766,17 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +            final double p1x = posX;
 +            final double p1z = posZ;
 +
-+            // we want to prioritize chunks approximately 10 chunks from the player
-+            final double priorityDistance = (10.0 * 16.0);
-+
-+            // we know the angle between the point we want and the looking vector end is FOV / 2.0f
-+
-+            // a is the looking vector
-+            // b is what we want to find here
-+            // we know that b and a form a right triangle, where b is going to be the hypot, and we
-+            // know the angle between them
-+            // so we can figure out b's length from this
-+            // cos(FOV/2.0) = ||a|| / ||b||
-+            // ||b|| = ||a|| / cos(FOV/2.0)
-+
-+            // now we know that the unit vector for b is just going to be the rotation of the looking vector
-+            // since we actually know the looking vector's angle, this is just going to be yaw +- FOV/2.0
-+
-+            final double len = priorityDistance / (Math.cos(Math.toRadians((double)(FOV / 2.0))));
-+
-+            // p2 = ||b|| * b_unit
-+
 +            // to the left of the looking direction
-+            final double p2x = len * Math.cos(Math.toRadians(yaw + (double)(FOV / 2.0))) // calculate rotated vector
++            final double p2x = PRIORITISED_DISTANCE * Math.cos(Math.toRadians(yaw + (double)(FOV / 2.0))) // calculate rotated vector
 +                    + p1x; // offset vector
-+            final double p2z = len * Math.sin(Math.toRadians(yaw + (double)(FOV / 2.0))) // calculate rotated vector
-+                    + p1x; // offset vector
++            final double p2z = PRIORITISED_DISTANCE * Math.sin(Math.toRadians(yaw + (double)(FOV / 2.0))) // calculate rotated vector
++                    + p1z; // offset vector
 +
 +            // to the right of the looking direction
-+            final double p3x = len * Math.cos(Math.toRadians(yaw - (double)(FOV / 2.0))) // calculate rotated vector
++            final double p3x = PRIORITISED_DISTANCE * Math.cos(Math.toRadians(yaw - (double)(FOV / 2.0))) // calculate rotated vector
 +                    + p1x; // offset vector
-+            final double p3z = len * Math.sin(Math.toRadians(yaw - (double)(FOV / 2.0))) // calculate rotated vector
-+                    + p1x; // offset vector
++            final double p3z = PRIORITISED_DISTANCE * Math.sin(Math.toRadians(yaw - (double)(FOV / 2.0))) // calculate rotated vector
++                    + p1z; // offset vector
 +
 +            // now that we have all of our points, we can recalculate the load queue
 +
@@ -823,7 +806,7 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +                            p1x, p1z, p2x, p2z, p3x, p3z,
 +
 +                            // center of chunk
-+                            (double)((centerChunkX << 4) | 8), (double)((centerChunkZ << 4) | 8)
++                            (double)((chunkX << 4) | 8), (double)((chunkZ << 4) | 8)
 +                    );
 +
 +
@@ -839,7 +822,7 @@ index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681
 +                        if (prioritised) {
 +                            // we don't prioritise these chunks above others because we also want to make sure some chunks
 +                            // will be loaded if the player changes direction
-+                            priority = (double)manhattanDistance / 6.0; // TODO find value
++                            priority = (double)manhattanDistance / 6.0;
 +                        } else {
 +                            priority = (double)manhattanDistance;
 +                        }
