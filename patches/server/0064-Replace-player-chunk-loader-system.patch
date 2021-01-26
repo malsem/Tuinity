@@ -28,10 +28,10 @@ index 5dfa0658838c4801cdf260eae8b98163f729e5af..63aa58ee2a72588b3974e169b8ddfc01
  
 diff --git a/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df9cf0d153
+index 0000000000000000000000000000000000000000..3163269544584a520207215a35aac681bc7c2d63
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
-@@ -0,0 +1,834 @@
+@@ -0,0 +1,843 @@
 +package com.tuinity.tuinity.chunk;
 +
 +import com.destroystokyo.paper.util.misc.PlayerAreaMap;
@@ -210,7 +210,15 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<EntityPlayer> newState) -> {
 +                    PlayerChunkLoader.this.onChunkLeave(player, rangeX, rangeZ);
 +                });
-+        this.loadMap = new PlayerAreaMap(pooledHashSets);
++        this.loadMap = new PlayerAreaMap(pooledHashSets,
++                null,
++                (EntityPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
++                 com.destroystokyo.paper.util.misc.PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<EntityPlayer> newState) -> {
++                    if (newState != null) {
++                        return;
++                    }
++                    PlayerChunkLoader.this.isTargetedForPlayerLoad.remove(MCUtil.getCoordinateKey(rangeX, rangeZ));
++                });
 +        this.loadTicketCleanup = new PlayerAreaMap(pooledHashSets,
 +                null,
 +                (EntityPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
@@ -220,11 +228,9 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +                    }
 +                    ChunkCoordIntPair chunkPos = new ChunkCoordIntPair(rangeX, rangeZ);
 +                    PlayerChunkLoader.this.chunkMap.world.getChunkProvider().removeTicketAtLevel(TicketType.PLAYER, chunkPos, LOADED_TICKET_LEVEL, chunkPos);
-+                    final long key = chunkPos.longKey;
-+                    if (PlayerChunkLoader.this.pendingLimitedChunkLoads.remove(key)) {
++                    if (PlayerChunkLoader.this.chunkTicketTracker.remove(chunkPos.pair())) {
 +                        --PlayerChunkLoader.this.concurrentChunkLoads;
 +                    }
-+                    PlayerChunkLoader.this.hasPlayerTicketsAdded.remove(key);
 +                });
 +        this.tickMap = new PlayerAreaMap(pooledHashSets,
 +                (EntityPlayer player, int rangeX, int rangeZ, int currPosX, int currPosZ, int prevPosX, int prevPosZ,
@@ -250,7 +256,8 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +                });
 +    }
 +
-+    protected final LongOpenHashSet hasPlayerTicketsAdded = new LongOpenHashSet();
++    protected final LongOpenHashSet isTargetedForPlayerLoad = new LongOpenHashSet();
++    protected final LongOpenHashSet chunkTicketTracker = new LongOpenHashSet();
 +
 +    // rets whether the chunk is at a loaded stage that is ready to be sent to players
 +    public boolean isChunkPlayerLoaded(final int chunkX, final int chunkZ) {
@@ -261,7 +268,7 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +            return false;
 +        }
 +
-+        return chunk.getSendingChunk() != null && this.hasPlayerTicketsAdded.contains(key);
++        return chunk.getSendingChunk() != null && this.isTargetedForPlayerLoad.contains(key);
 +    }
 +
 +    public boolean isChunkSent(final EntityPlayer player, final int chunkX, final int chunkZ) {
@@ -280,7 +287,7 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +
 +    protected int getMaxChunkLoads() {
 +        double config = TuinityConfig.maxConcurrentChunkLoads;
-+        return config <= 0 ? (int)Math.round(-config * MinecraftServer.getServer().getPlayerCount()) : (int)config;
++        return (config <= 0 ? (int)Math.ceil(-config * MinecraftServer.getServer().getPlayerCount()) : (int)config) * 9;
 +    }
 +
 +    public void onChunkPlayerTickReady(final int chunkX, final int chunkZ) {
@@ -290,10 +297,6 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +
 +    public void onChunkSendReady(final int chunkX, final int chunkZ) {
 +        final long chunkKey = MCUtil.getCoordinateKey(chunkX, chunkZ);
-+
-+        if (this.pendingLimitedChunkLoads.remove(chunkKey)) {
-+            --this.concurrentChunkLoads;
-+        }
 +
 +        final PooledLinkedHashSets.PooledObjectLinkedOpenHashSet<EntityPlayer> playersInSendRange = this.broadcastMap.getObjectsInRange(chunkX, chunkZ);
 +
@@ -333,6 +336,12 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +
 +        final ChunkPriorityHolder holder = new ChunkPriorityHolder(chunkX, chunkZ, manhattanDistance, 0.0);
 +        data.sendQueue.add(holder);
++    }
++
++    public void onChunkLoad(final int chunkX, final int chunkZ) {
++        if (this.chunkTicketTracker.remove(MCUtil.getCoordinateKey(chunkX, chunkZ))) {
++            --this.concurrentChunkLoads;
++        }
 +    }
 +
 +    public void onChunkLeave(final EntityPlayer player, final int chunkX, final int chunkZ) {
@@ -420,13 +429,12 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +
 +            final ChunkPriorityHolder queuedSend = data.sendQueue.pollFirst();
 +            if (queuedSend == null) {
++                concurrentChunkSends.getAndDecrement(); // we never sent, so decrease
 +                // stop iterating over players who have nothing to send
 +                if (this.chunkSendQueue.isEmpty()) {
 +                    // nothing left
-+                    concurrentChunkSends.getAndDecrement(); // we never sent, so decrease
 +                    break;
 +                }
-+                concurrentChunkSends.getAndDecrement(); // we never sent, so decrease
 +                continue;
 +            }
 +
@@ -461,7 +469,6 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +    }
 +
 +    protected int concurrentChunkLoads;
-+    protected final LongOpenHashSet pendingLimitedChunkLoads = new LongOpenHashSet();
 +    private void tryLoadChunks() {
 +        if (this.chunkLoadQueue.isEmpty()) {
 +            return;
@@ -501,10 +508,6 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +                    this.chunkLoadQueue.add(data);
 +                    break;
 +                }
-+
-+                if (this.pendingLimitedChunkLoads.add(chunkKey)) {
-+                    ++this.concurrentChunkLoads;
-+                }
 +            }
 +
 +            // can only poll after we decide to load
@@ -516,22 +519,28 @@ index 0000000000000000000000000000000000000000..2dfb25d33e06f670bdb2ad79aef7e8df
 +            // add necessary tickets to load chunk up to send-ready
 +            for (int dz = -1; dz <= 1; ++dz) {
 +                for (int dx = -1; dx <= 1; ++dx) {
-+                    final ChunkCoordIntPair chunkPos = new ChunkCoordIntPair(queuedLoad.chunkX + dx, queuedLoad.chunkZ + dz);
++                    final int offX = queuedLoad.chunkX + dx;
++                    final int offZ = queuedLoad.chunkZ + dz;
++                    final ChunkCoordIntPair chunkPos = new ChunkCoordIntPair(offX, offZ);
++
 +                    this.chunkMap.world.getChunkProvider().addTicketAtLevel(TicketType.PLAYER, chunkPos, LOADED_TICKET_LEVEL, chunkPos);
++                    if (this.chunkMap.world.getChunkProvider().getChunkAtIfLoadedMainThreadNoCache(offX, offZ) != null) {
++                        continue;
++                    }
++
++                    if (priority > 0.0 && this.chunkTicketTracker.add(MCUtil.getCoordinateKey(offX, offZ))) {
++                        ++this.concurrentChunkLoads;
++                    }
 +                }
 +            }
 +
 +            // mark that we've added tickets here
-+            this.hasPlayerTicketsAdded.add(chunkKey);
++            this.isTargetedForPlayerLoad.add(chunkKey);
 +
 +            // it's possible all we needed was the player tickets to queue up the send.
 +            if (this.isChunkPlayerLoaded(queuedLoad.chunkX, queuedLoad.chunkZ)) {
 +                // yup, all we needed.
 +                this.onChunkSendReady(queuedLoad.chunkX, queuedLoad.chunkZ);
-+
-+                if (this.pendingLimitedChunkLoads.remove(chunkKey)) {
-+                    --this.concurrentChunkLoads;
-+                }
 +            }
 +        }
 +    }
@@ -888,7 +897,7 @@ index 42ce3b80217b574a1852e12f500b366a912e23e2..ba9beba8a961363d86971d4ff21dce2d
  
          public final String worldName;
 diff --git a/src/main/java/net/minecraft/server/Chunk.java b/src/main/java/net/minecraft/server/Chunk.java
-index ae07ea2a34f5cd82ce2eae523359cb7540065335..329e739cd298e377d4da2862c51be583e26dd091 100644
+index ae07ea2a34f5cd82ce2eae523359cb7540065335..de6a57577e7317de2a48b26d9e619b355a6f5e32 100644
 --- a/src/main/java/net/minecraft/server/Chunk.java
 +++ b/src/main/java/net/minecraft/server/Chunk.java
 @@ -398,12 +398,12 @@ public class Chunk implements IChunkAccess {
@@ -940,6 +949,14 @@ index ae07ea2a34f5cd82ce2eae523359cb7540065335..329e739cd298e377d4da2862c51be583
          }
          // Paper end - no-tick view distance
      }
+@@ -1009,6 +985,7 @@ public class Chunk implements IChunkAccess {
+         // Paper end - neighbour cache
+         org.bukkit.Server server = this.world.getServer();
+         ((WorldServer)this.world).getChunkProvider().addLoadedChunk(this); // Paper
++        ((WorldServer)this.world).getChunkProvider().playerChunkMap.playerChunkManager.onChunkLoad(this.loc.x, this.loc.z); // Tuinity - rewrite player chunk management
+         if (server != null) {
+             /*
+              * If it's a new world, the first few chunks are generated inside
 diff --git a/src/main/java/net/minecraft/server/ChunkMapDistance.java b/src/main/java/net/minecraft/server/ChunkMapDistance.java
 index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3d81c6858 100644
 --- a/src/main/java/net/minecraft/server/ChunkMapDistance.java
