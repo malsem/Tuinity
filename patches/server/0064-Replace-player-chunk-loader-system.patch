@@ -28,10 +28,10 @@ index 5dfa0658838c4801cdf260eae8b98163f729e5af..63aa58ee2a72588b3974e169b8ddfc01
  
 diff --git a/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40057325ef
+index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc336827f38d
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
-@@ -0,0 +1,826 @@
+@@ -0,0 +1,825 @@
 +package com.tuinity.tuinity.chunk;
 +
 +import com.destroystokyo.paper.util.misc.PlayerAreaMap;
@@ -50,6 +50,7 @@ index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40
 +import net.minecraft.server.MinecraftServer;
 +import net.minecraft.server.Packet;
 +import net.minecraft.server.PacketPlayOutViewCentre;
++import net.minecraft.server.PacketPlayOutViewDistance;
 +import net.minecraft.server.PlayerChunk;
 +import net.minecraft.server.PlayerChunkMap;
 +import net.minecraft.server.TicketType;
@@ -356,9 +357,6 @@ index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40
 +
 +    public void addPlayer(final EntityPlayer player) {
 +        TickThread.ensureTickThread("Cannot add player async");
-+        if (!player.isRealPlayer) {
-+            return;
-+        }
 +        final PlayerLoaderData data = new PlayerLoaderData(player, this);
 +        if (this.playerMap.putIfAbsent(player, data) == null) {
 +            data.update();
@@ -367,9 +365,6 @@ index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40
 +
 +    public void removePlayer(final EntityPlayer player) {
 +        TickThread.ensureTickThread("Cannot remove player async");
-+        if (!player.isRealPlayer) {
-+            return;
-+        }
 +
 +        final PlayerLoaderData loaderData = this.playerMap.remove(player);
 +        if (loaderData == null) {
@@ -388,9 +383,6 @@ index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40
 +
 +    public void updatePlayer(final EntityPlayer player) {
 +        TickThread.ensureTickThread("Cannot update player async");
-+        if (!player.isRealPlayer) {
-+            return;
-+        }
 +        final PlayerLoaderData loaderData = this.playerMap.get(player);
 +        if (loaderData != null) {
 +            loaderData.update();
@@ -749,6 +741,13 @@ index 0000000000000000000000000000000000000000..fd8b5ffff2ad993171863c0575b2ed40
 +            this.loader.loadTicketCleanup.addOrUpdate(this.player, centerChunkX, centerChunkZ, loadViewDistance + 1);
 +            this.loader.tickMap.addOrUpdate(this.player, centerChunkX, centerChunkZ, tickViewDistance);
 +
++            if (sendViewDistance != this.lastSendDistance) {
++                // update the view radius for client
++                // note that this should be after the map calls because the client wont expect unload calls not in its VD
++                // and it's possible we decreased VD here
++                this.player.playerConnection.sendPacket(new PacketPlayOutViewDistance(sendViewDistance - 1)); // client already expects the 1 radius neighbours, so subtract 1.
++            }
++
 +            this.lastLocX = posX;
 +            this.lastLocZ = posZ;
 +            this.lastYaw = yaw;
@@ -1015,7 +1014,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
      class b extends ChunkMap {
  
 diff --git a/src/main/java/net/minecraft/server/ChunkProviderServer.java b/src/main/java/net/minecraft/server/ChunkProviderServer.java
-index 38ca1c042afd41a1f660f88e398fedde00f34e39..86a615ab33eaec2a2f0142f6834852a4cba9ff23 100644
+index 38ca1c042afd41a1f660f88e398fedde00f34e39..f21901961b9febb489810aa69e97304aca4b4080 100644
 --- a/src/main/java/net/minecraft/server/ChunkProviderServer.java
 +++ b/src/main/java/net/minecraft/server/ChunkProviderServer.java
 @@ -912,6 +912,7 @@ public class ChunkProviderServer extends IChunkProvider {
@@ -1026,14 +1025,14 @@ index 38ca1c042afd41a1f660f88e398fedde00f34e39..86a615ab33eaec2a2f0142f6834852a4
          this.tickChunks();
          this.world.timings.chunks.stopTiming(); // Paper - timings
          this.world.timings.doChunkUnload.startTiming(); // Spigot
-@@ -1211,6 +1212,7 @@ public class ChunkProviderServer extends IChunkProvider {
-             if (ChunkProviderServer.this.tickDistanceManager()) {
-                 return true;
-             } else {
-+                ChunkProviderServer.this.playerChunkMap.playerChunkManager.tickMidTick(); // Tuinity
-                 ChunkProviderServer.this.lightEngine.queueUpdate(); // Paper - not needed // Tuinity - prevent queue overflow when no players are in this world
-                 return super.executeNext() || execChunkTask; // Paper
-             }
+@@ -1205,6 +1206,7 @@ public class ChunkProviderServer extends IChunkProvider {
+         @Override
+         protected boolean executeNext() {
+             com.tuinity.tuinity.util.TickThread.softEnsureTickThread("Cannot execute chunk tasks off-main thread");// Tuinity
++            ChunkProviderServer.this.playerChunkMap.playerChunkManager.tickMidTick(); // Tuinity
+         // CraftBukkit start - process pending Chunk loadCallback() and unloadCallback() after each run task
+         try {
+             boolean execChunkTask = com.destroystokyo.paper.io.chunk.ChunkTaskManager.pollChunkWaitQueue() || ChunkProviderServer.this.world.asyncChunkTaskManager.pollNextChunkTask(); // Paper
 diff --git a/src/main/java/net/minecraft/server/EntityPlayer.java b/src/main/java/net/minecraft/server/EntityPlayer.java
 index 9f5b7243ccbe0729a061345c25033d9145b91b3f..3c2f46ba0ae5e5e50297a2e1dbbb2c0d3caf4aed 100644
 --- a/src/main/java/net/minecraft/server/EntityPlayer.java
