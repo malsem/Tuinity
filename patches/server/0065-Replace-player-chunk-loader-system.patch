@@ -1060,16 +1060,20 @@ index e79e773f2219f9a9ae076fcbc8108b792201b11a..96d159d1a3a35211aa36735aa5ce84e0
              worldData.addProperty("keep-spawn-loaded-range", world.paperConfig.keepLoadedRange);
              worldData.addProperty("visible-chunk-count", visibleChunks.size());
 diff --git a/src/main/java/net/minecraft/server/NetworkManager.java b/src/main/java/net/minecraft/server/NetworkManager.java
-index 6a0ec0105399066dede622b45c9471b32c162cf6..5e7ffdbb78af677bcf20da2d843065aeaf0052ec 100644
+index 6a0ec0105399066dede622b45c9471b32c162cf6..12df0d8bd73e803d63985673a3a6c7a582ac1df8 100644
 --- a/src/main/java/net/minecraft/server/NetworkManager.java
 +++ b/src/main/java/net/minecraft/server/NetworkManager.java
-@@ -105,6 +105,24 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -105,6 +105,28 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
          }
      }
      // Tuinity end - allow controlled flushing
 +    // Tuinity start - add pending task queue
 +    private final Queue<Runnable> pendingTasks = new java.util.concurrent.ConcurrentLinkedQueue<>();
 +    public void execute(final Runnable run) {
++        if (!this.channel.isRegistered()) {
++            run.run();
++            return;
++        }
 +        final boolean queue = !this.packetQueue.isEmpty();
 +        if (!queue) {
 +            this.channel.eventLoop().execute(run);
@@ -1088,7 +1092,7 @@ index 6a0ec0105399066dede622b45c9471b32c162cf6..5e7ffdbb78af677bcf20da2d843065ae
  
      public NetworkManager(EnumProtocolDirection enumprotocoldirection) {
          this.h = enumprotocoldirection;
-@@ -486,6 +504,7 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -486,6 +508,7 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
          return false;
      }
      private boolean processQueue() {
@@ -1096,7 +1100,7 @@ index 6a0ec0105399066dede622b45c9471b32c162cf6..5e7ffdbb78af677bcf20da2d843065ae
          if (this.packetQueue.isEmpty()) return true;
          final boolean needsFlush = this.canFlush; // Tuinity - make only one flush call per sendPacketQueue() call
          boolean hasWrotePacket = false;
-@@ -515,6 +534,12 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
+@@ -515,6 +538,12 @@ public class NetworkManager extends SimpleChannelInboundHandler<Packet<?>> {
              }
          }
          return true;
@@ -1366,10 +1370,10 @@ index a42571cfd2c9c80df27e59db832cb64c2a64e141..fdf30554bfe442f846a634c80a4835db
          int j = 1;
          for (int x = -1; x <= 1; x++) {
 diff --git a/src/main/java/net/minecraft/server/PlayerList.java b/src/main/java/net/minecraft/server/PlayerList.java
-index 1eb44877e7384ae0a028a12b832684126b8d50ec..de159c39ed51d63819100005fae4b6eab91042bb 100644
+index eabd1aa2b740bcb6db40be300cd6daf59674fa3f..a29545bbfe1251c0c6adbddcb541f54d80ba1ad2 100644
 --- a/src/main/java/net/minecraft/server/PlayerList.java
 +++ b/src/main/java/net/minecraft/server/PlayerList.java
-@@ -186,7 +186,7 @@ public abstract class PlayerList {
+@@ -187,7 +187,7 @@ public abstract class PlayerList {
          boolean flag1 = gamerules.getBoolean(GameRules.REDUCED_DEBUG_INFO);
  
          // Spigot - view distance
@@ -1378,7 +1382,7 @@ index 1eb44877e7384ae0a028a12b832684126b8d50ec..de159c39ed51d63819100005fae4b6ea
          entityplayer.getBukkitEntity().sendSupportedChannels(); // CraftBukkit
          playerconnection.sendPacket(new PacketPlayOutCustomPayload(PacketPlayOutCustomPayload.a, (new PacketDataSerializer(Unpooled.buffer())).a(this.getServer().getServerModName())));
          playerconnection.sendPacket(new PacketPlayOutServerDifficulty(worlddata.getDifficulty(), worlddata.isDifficultyLocked()));
-@@ -857,7 +857,7 @@ public abstract class PlayerList {
+@@ -858,7 +858,7 @@ public abstract class PlayerList {
          // CraftBukkit start
          WorldData worlddata = worldserver1.getWorldData();
          entityplayer1.playerConnection.sendPacket(new PacketPlayOutRespawn(worldserver1.getDimensionManager(), worldserver1.getDimensionKey(), BiomeManager.a(worldserver1.getSeed()), entityplayer1.playerInteractManager.getGameMode(), entityplayer1.playerInteractManager.c(), worldserver1.isDebugWorld(), worldserver1.isFlatWorld(), flag));
@@ -1387,7 +1391,7 @@ index 1eb44877e7384ae0a028a12b832684126b8d50ec..de159c39ed51d63819100005fae4b6ea
          entityplayer1.spawnIn(worldserver1);
          entityplayer1.dead = false;
          entityplayer1.playerConnection.teleport(new Location(worldserver1.getWorld(), entityplayer1.locX(), entityplayer1.locY(), entityplayer1.locZ(), entityplayer1.yaw, entityplayer1.pitch));
-@@ -1126,7 +1126,7 @@ public abstract class PlayerList {
+@@ -1127,7 +1127,7 @@ public abstract class PlayerList {
              // Really shouldn't happen...
              backingSet = world != null ? world.players.toArray() : players.toArray();
          } else {
