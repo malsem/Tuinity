@@ -13,8 +13,43 @@ it be from the anti-xray logic or the compression itself.
 Chunk loading is also rate limited in the same manner, so this
 will result in a maximum responsiveness for change.
 
+Config:
+```
+player-chunks:
+  autoconfig-send-distance: true
+  min-load-radius: 3
+  max-concurrent-sends: 12.0
+  max-concurrent-loads: 5.0
+```
+
+autoconfig-send-distance - Whether to try to use the client's
+view distance for the send view distance in the server. In the
+case that no plugin has explicitly set the send distance and
+the client view distance is less-than the server's send distance,
+the client's view distance will be used. This will not affect
+tick view distance or no-tick view distance.
+
+min-load-radius - The radius of chunks around a player that
+are not throttled for loading. The number of chunks
+affected is actually the configured value plus one as this
+config controls the chunks the client will be able to render.
+
+max-concurrent-sends - The maximum number of chunks that
+can be queued to send at any given time. Low values
+are generally going to solve server-sided networking
+bottlenecks like anti-xray and chunk compression. Client
+side networking is unlikely to be helped (i.e this wont help
+people running off McDonald's wifi). Setting this
+value to negative will make the server dynamically scale it
+with players. i.e -5 will use 5 * online players for the max sends.
+
+max-concurrent-loads - The maxmium number of chunks
+that can be queued to be loaded at any given time. Lower
+values help the responsitivity to player movement and
+higher values help loading when the server is at a low TPS.
+
 diff --git a/src/main/java/co/aikar/timings/TimingsExport.java b/src/main/java/co/aikar/timings/TimingsExport.java
-index 5dfa0658838c4801cdf260eae8b98163f729e5af..63aa58ee2a72588b3974e169b8ddfc01190d6cd6 100644
+index 5dfa0658838c4801cdf260eae8b98163f729e5af..35810f42d7a0cd50a4cbe90e8d698fe57914c889 100644
 --- a/src/main/java/co/aikar/timings/TimingsExport.java
 +++ b/src/main/java/co/aikar/timings/TimingsExport.java
 @@ -154,7 +154,7 @@ public class TimingsExport extends Thread {
@@ -22,16 +57,16 @@ index 5dfa0658838c4801cdf260eae8b98163f729e5af..63aa58ee2a72588b3974e169b8ddfc01
                  })),
                  pair("ticking-distance", world.getChunkProvider().playerChunkMap.getEffectiveViewDistance()),
 -                pair("notick-viewdistance", world.getChunkProvider().playerChunkMap.getEffectiveNoTickViewDistance())
-+                pair("notick-viewdistance", world.getChunkProvider().playerChunkMap.playerChunkManager.getEffectiveNoTickViewDistance()) // Tuinity - replace old player chunk management
++                pair("notick-viewdistance", world.getChunkProvider().playerChunkMap.playerChunkManager.getTargetNoTickViewDistance()) // Tuinity - replace old player chunk management
              ));
          }));
  
 diff --git a/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc336827f38d
+index 0000000000000000000000000000000000000000..bebc79654a3f0752abf441549fb90038c58fc0cd
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
-@@ -0,0 +1,825 @@
+@@ -0,0 +1,886 @@
 +package com.tuinity.tuinity.chunk;
 +
 +import com.destroystokyo.paper.util.misc.PlayerAreaMap;
@@ -134,22 +169,37 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +     */
 +    protected int rawTickDistance = -1;
 +
++    // methods to bridge for API
++
++    public int getTargetViewDistance() {
++        return this.getTickDistance();
++    }
++
++    public void setTargetViewDistance(final int distance) {
++        this.setTickDistance(distance);
++    }
++
++    public int getTargetNoTickViewDistance() {
++        return this.getLoadDistance() - 1;
++    }
++
++    public void setTargetNoTickViewDistance(final int distance) {
++        this.setLoadDistance(distance == -1 ? -1 : distance + 1);
++    }
++
++    public int getTargetSendDistance() {
++        return this.rawSendDistance == -1 ? this.getLoadDistance() : this.rawSendDistance;
++    }
++
++    public void setTargetSendDistance(final int distance) {
++        this.setSendDistance(distance);
++    }
++
++    // internal methods
++
 +    public int getSendDistance() {
 +        final int loadDistance = this.getLoadDistance();
 +        return this.rawSendDistance == -1 ? loadDistance : Math.min(this.rawSendDistance, loadDistance);
-+    }
-+
-+    public int getLoadDistance() {
-+        final int tickDistance = this.getTickDistance();
-+        return this.rawLoadDistance == -1 ? tickDistance + 1 : Math.max(tickDistance + 1, this.rawLoadDistance);
-+    }
-+
-+    public int getTickDistance() {
-+        return this.rawTickDistance;
-+    }
-+
-+    public int getEffectiveNoTickViewDistance() {
-+        return this.getLoadDistance() - 1;
 +    }
 +
 +    public void setSendDistance(final int distance) {
@@ -159,11 +209,20 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +        this.rawSendDistance = distance;
 +    }
 +
++    public int getLoadDistance() {
++        final int tickDistance = this.getTickDistance();
++        return this.rawLoadDistance == -1 ? tickDistance + 1 : Math.max(tickDistance + 1, this.rawLoadDistance);
++    }
++
 +    public void setLoadDistance(final int distance) {
 +        if (distance != -1 && (distance < MIN_VIEW_DISTANCE || distance > MAX_VIEW_DISTANCE + 1)) {
 +            throw new IllegalArgumentException(Integer.toString(distance));
 +        }
 +        this.rawLoadDistance = distance;
++    }
++
++    public int getTickDistance() {
++        return this.rawTickDistance;
 +    }
 +
 +    public void setTickDistance(final int distance) {
@@ -389,6 +448,10 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +        }
 +    }
 +
++    public PlayerLoaderData getData(final EntityPlayer player) {
++        return this.playerMap.get(player);
++    }
++
 +    public void tick() {
 +        TickThread.ensureTickThread("Cannot tick async");
 +        for (final PlayerLoaderData data : this.playerMap.values()) {
@@ -559,7 +622,7 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +        }
 +    }
 +
-+    protected static final class PlayerLoaderData {
++    public static final class PlayerLoaderData {
 +
 +        protected static final float FOV = 110.0f;
 +        protected static final double PRIORITISED_DISTANCE = 12.0 * 16.0;
@@ -613,16 +676,44 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +            this.loader = loader;
 +        }
 +
-+        public void setSendViewDistance(final int distance) {
++        // these view distance methods are for api
++        public int getTargetSendViewDistance() {
++            return this.sendViewDistance == -1 ? this.getLoadDistance() : this.sendViewDistance;
++        }
++
++        public void setTargetSendViewDistance(final int distance) {
++            if (distance != -1 && (distance < MIN_VIEW_DISTANCE || distance > MAX_VIEW_DISTANCE + 1)) {
++                throw new IllegalArgumentException(Integer.toString(distance));
++            }
 +            this.sendViewDistance = distance;
 +        }
 +
-+        public void setLoadViewDistance(final int distance) {
-+            this.loadViewDistance = distance;
++        public int getTargetNoTickViewDistance() {
++            return (this.loadViewDistance == -1 ? this.getLoadDistance() : this.loadViewDistance) - 1;
 +        }
 +
-+        public void setTickViewDistance(final int distance) {
++        public void setTargetNoTickViewDistance(final int distance) {
++            if (distance != -1 && (distance < MIN_VIEW_DISTANCE || distance > MAX_VIEW_DISTANCE)) {
++                throw new IllegalArgumentException(Integer.toString(distance));
++            }
++            this.loadViewDistance = distance == -1 ? -1 : distance + 1;
++        }
++
++        public int getTargetTickViewDistance() {
++            return this.tickViewDistance == -1 ? this.loader.getTickDistance() : this.tickViewDistance;
++        }
++
++        public void setTargetTickViewDistance(final int distance) {
++            if (distance < MIN_VIEW_DISTANCE || distance > MAX_VIEW_DISTANCE) {
++                throw new IllegalArgumentException(Integer.toString(distance));
++            }
 +            this.tickViewDistance = distance;
++        }
++
++        protected int getLoadDistance() {
++            final int tickViewDistance = this.tickViewDistance == -1 ? this.loader.getTickDistance() : this.tickViewDistance;
++
++            return Math.max(tickViewDistance + 1, this.loadViewDistance == -1 ? this.loader.getLoadDistance() : this.loadViewDistance);
 +        }
 +
 +        public boolean hasSentChunk(final int chunkX, final int chunkZ) {
@@ -687,12 +778,17 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +            this.loader.tickMap.remove(this.player);
 +        }
 +
++        protected int getClientViewDistance() {
++            return this.player.clientViewDistance == null ? -1 : this.player.clientViewDistance.intValue();
++        }
++
 +        public void update() {
 +            final int tickViewDistance = this.tickViewDistance == -1 ? this.loader.getTickDistance() : this.tickViewDistance;
 +            // load view cannot be less-than tick view + 1
 +            final int loadViewDistance = Math.max(tickViewDistance + 1, this.loadViewDistance == -1 ? this.loader.getLoadDistance() : this.loadViewDistance);
 +            // send view cannot be greater-than load view
-+            final int sendViewDistance = Math.min(loadViewDistance, this.sendViewDistance == -1 ? this.loader.getSendDistance() : this.sendViewDistance);
++            final int clientViewDistance = this.getClientViewDistance();
++            final int sendViewDistance = Math.min(loadViewDistance, this.sendViewDistance == -1 ? (!TuinityConfig.autoConfigureSendViewDistance || clientViewDistance == -1 ? this.loader.getSendDistance() : clientViewDistance + 1) : this.sendViewDistance);
 +
 +            final double posX = this.player.locX();
 +            final double posZ = this.player.locZ();
@@ -858,21 +954,23 @@ index 0000000000000000000000000000000000000000..b7fd5dc488c259a39e6a1ddbd2e8dc33
 +    }
 +}
 diff --git a/src/main/java/com/tuinity/tuinity/config/TuinityConfig.java b/src/main/java/com/tuinity/tuinity/config/TuinityConfig.java
-index 42ce3b80217b574a1852e12f500b366a912e23e2..ba9beba8a961363d86971d4ff21dce2d1ecb53f2 100644
+index 42ce3b80217b574a1852e12f500b366a912e23e2..2a16de4500149e473c59fda0fa14593cf61c97ca 100644
 --- a/src/main/java/com/tuinity/tuinity/config/TuinityConfig.java
 +++ b/src/main/java/com/tuinity/tuinity/config/TuinityConfig.java
-@@ -229,6 +229,16 @@ public final class TuinityConfig {
+@@ -229,6 +229,18 @@ public final class TuinityConfig {
          useNewLightEngine = TuinityConfig.getBoolean("use-new-light-engine", true);
      }
  
 +    public static int playerMinChunkLoadRadius;
 +    public static double maxConcurrentChunkSends;
 +    public static double maxConcurrentChunkLoads;
++    public static boolean autoConfigureSendViewDistance;
 +
 +    private static void newPlayerChunkManagement() {
 +        playerMinChunkLoadRadius = TuinityConfig.getInt("player-chunks.min-load-radius", 3);
 +        maxConcurrentChunkSends = TuinityConfig.getDouble("player-chunks.max-concurrent-sends", 12.0);
 +        maxConcurrentChunkLoads = TuinityConfig.getDouble("player-chunks.max-concurrent-loads", 5.0);
++        autoConfigureSendViewDistance = TuinityConfig.getBoolean("player-chunks.autoconfig-send-distance", true);
 +    }
 +
      public static final class WorldConfig {
@@ -1033,6 +1131,37 @@ index 38ca1c042afd41a1f660f88e398fedde00f34e39..f21901961b9febb489810aa69e97304a
          // CraftBukkit start - process pending Chunk loadCallback() and unloadCallback() after each run task
          try {
              boolean execChunkTask = com.destroystokyo.paper.io.chunk.ChunkTaskManager.pollChunkWaitQueue() || ChunkProviderServer.this.world.asyncChunkTaskManager.pollNextChunkTask(); // Paper
+diff --git a/src/main/java/net/minecraft/server/EntityEnderDragon.java b/src/main/java/net/minecraft/server/EntityEnderDragon.java
+index de53af8c01f8fa9636386737b6bc071b32f87cd1..4585fecd27258345dbc34f0281b46886575907f8 100644
+--- a/src/main/java/net/minecraft/server/EntityEnderDragon.java
++++ b/src/main/java/net/minecraft/server/EntityEnderDragon.java
+@@ -576,9 +576,9 @@ public class EntityEnderDragon extends EntityInsentient implements IMonster {
+             if (this.deathAnimationTicks == 1 && !this.isSilent()) {
+                 // CraftBukkit start - Use relative location for far away sounds
+                 // this.world.b(1028, this.getChunkCoordinates(), 0);
+-                int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16; // Paper - updated to use worlds actual view distance incase we have to uncomment this due to removal of player view distance API
++                // int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16; // Paper - updated to use worlds actual view distance incase we have to uncomment this due to removal of player view distance API // Tuinity - apply view distance patch
+                 for (EntityPlayer player : (List<EntityPlayer>) ((WorldServer)world).getPlayers()) {
+-                    // final int viewDistance = player.getViewDistance(); // TODO apply view distance api patch
++                    final int viewDistance = player.getBukkitEntity().getViewDistance(); // Tuinity - apply view distance patch
+                     // Paper end
+                     double deltaX = this.locX() - player.locX();
+                     double deltaZ = this.locZ() - player.locZ();
+diff --git a/src/main/java/net/minecraft/server/EntityLightning.java b/src/main/java/net/minecraft/server/EntityLightning.java
+index 5200b0396ee41edb42ff727c78cf3b5fce091d6b..239f504430b6c59923fd677d1be0121be5022604 100644
+--- a/src/main/java/net/minecraft/server/EntityLightning.java
++++ b/src/main/java/net/minecraft/server/EntityLightning.java
+@@ -61,8 +61,9 @@ public class EntityLightning extends Entity {
+             // CraftBukkit start - Use relative location for far away sounds
+             // this.world.playSound((EntityHuman) null, this.locX(), this.locY(), this.locZ(), SoundEffects.ENTITY_LIGHTNING_BOLT_THUNDER, SoundCategory.WEATHER, 10000.0F, 0.8F + this.random.nextFloat() * 0.2F);
+             float pitch = 0.8F + this.random.nextFloat() * 0.2F;
+-            int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16;
++            //int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16; // Tuinity - apply view distance patch
+             for (EntityPlayer player : (List<EntityPlayer>) (List) this.world.getPlayers()) {
++                final int viewDistance = player.getBukkitEntity().getViewDistance(); // Tuinity - apply view distance patch
+                 double deltaX = this.locX() - player.locX();
+                 double deltaZ = this.locZ() - player.locZ();
+                 double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
 diff --git a/src/main/java/net/minecraft/server/EntityPlayer.java b/src/main/java/net/minecraft/server/EntityPlayer.java
 index 9f5b7243ccbe0729a061345c25033d9145b91b3f..3c2f46ba0ae5e5e50297a2e1dbbb2c0d3caf4aed 100644
 --- a/src/main/java/net/minecraft/server/EntityPlayer.java
@@ -1046,8 +1175,40 @@ index 9f5b7243ccbe0729a061345c25033d9145b91b3f..3c2f46ba0ae5e5e50297a2e1dbbb2c0d
      public org.bukkit.event.player.PlayerQuitEvent.QuitReason quitReason = null; // Paper - there are a lot of changes to do if we change all methods leading to the event
  
      public EntityPlayer(MinecraftServer minecraftserver, WorldServer worldserver, GameProfile gameprofile, PlayerInteractManager playerinteractmanager) {
+diff --git a/src/main/java/net/minecraft/server/EntityWither.java b/src/main/java/net/minecraft/server/EntityWither.java
+index 2e623ef9be036ea467e9e41817c2eced018f8f93..51abf34d4b8e5e7832a55fb4bf4fdf8982c2de1c 100644
+--- a/src/main/java/net/minecraft/server/EntityWither.java
++++ b/src/main/java/net/minecraft/server/EntityWither.java
+@@ -213,9 +213,9 @@ public class EntityWither extends EntityMonster implements IRangedEntity {
+                 if (!this.isSilent()) {
+                     // CraftBukkit start - Use relative location for far away sounds
+                     // this.world.b(1023, new BlockPosition(this), 0);
+-                    int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16; // Paper - updated to use worlds actual view distance incase we have to uncomment this due to removal of player view distance API
++                    //int viewDistance = ((WorldServer) this.world).getServer().getViewDistance() * 16; // Paper - updated to use worlds actual view distance incase we have to uncomment this due to removal of player view distance API // Tuinity - apply view distance patch
+                     for (EntityPlayer player : (List<EntityPlayer>)this.world.getPlayers()) {
+-                        // final int viewDistance = player.getViewDistance(); // TODO apply view distance api patch
++                        final int viewDistance = player.getBukkitEntity().getViewDistance(); // Tuinity - apply view distance patch
+                         double deltaX = this.locX() - player.locX();
+                         double deltaZ = this.locZ() - player.locZ();
+                         double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+diff --git a/src/main/java/net/minecraft/server/ItemEnderEye.java b/src/main/java/net/minecraft/server/ItemEnderEye.java
+index 3296d888a66e8d0ad861ed093cd62b0d2da6ff0b..bc6e2d7dda6c85e89967d06649558aafd8f2624b 100644
+--- a/src/main/java/net/minecraft/server/ItemEnderEye.java
++++ b/src/main/java/net/minecraft/server/ItemEnderEye.java
+@@ -36,9 +36,10 @@ public class ItemEnderEye extends Item {
+ 
+                     // CraftBukkit start - Use relative location for far away sounds
+                     // world.b(1038, blockposition1.b(1, 0, 1), 0);
+-                    int viewDistance = world.getServer().getViewDistance() * 16;
++                    //int viewDistance = world.getServer().getViewDistance() * 16; // Tuinity - apply view distance patch
+                     BlockPosition soundPos = blockposition1.b(1, 0, 1);
+                     for (EntityPlayer player : world.getServer().getServer().getPlayerList().players) {
++                        final int viewDistance = player.getBukkitEntity().getViewDistance(); // Tuinity - apply view distance patch
+                         double deltaX = soundPos.getX() - player.locX();
+                         double deltaZ = soundPos.getZ() - player.locZ();
+                         double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
 diff --git a/src/main/java/net/minecraft/server/MCUtil.java b/src/main/java/net/minecraft/server/MCUtil.java
-index e79e773f2219f9a9ae076fcbc8108b792201b11a..96d159d1a3a35211aa36735aa5ce84e0185308db 100644
+index e79e773f2219f9a9ae076fcbc8108b792201b11a..7438ed7671acb181fe88abd2db415cb09873db4f 100644
 --- a/src/main/java/net/minecraft/server/MCUtil.java
 +++ b/src/main/java/net/minecraft/server/MCUtil.java
 @@ -680,7 +680,7 @@ public final class MCUtil {
@@ -1055,7 +1216,7 @@ index e79e773f2219f9a9ae076fcbc8108b792201b11a..96d159d1a3a35211aa36735aa5ce84e0
              worldData.addProperty("name", world.getWorld().getName());
              worldData.addProperty("view-distance", world.getChunkProvider().playerChunkMap.getEffectiveViewDistance());
 -            worldData.addProperty("no-view-distance", world.getChunkProvider().playerChunkMap.getRawNoTickViewDistance());
-+            worldData.addProperty("no-view-distance", world.getChunkProvider().playerChunkMap.playerChunkManager.getEffectiveNoTickViewDistance()); // Tuinity - replace old player chunk management
++            worldData.addProperty("no-view-distance", world.getChunkProvider().playerChunkMap.playerChunkManager.getTargetNoTickViewDistance()); // Tuinity - replace old player chunk management
              worldData.addProperty("keep-spawn-loaded", world.keepSpawnInMemory);
              worldData.addProperty("keep-spawn-loaded-range", world.paperConfig.keepLoadedRange);
              worldData.addProperty("visible-chunk-count", visibleChunks.size());
@@ -1431,7 +1592,7 @@ index 28ee325fcc8b50397768363403823f2e3391d8c8..310733c7c277d25d64984aee5a3e9853
                  // Paper end - per player view distance
              }
 diff --git a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
-index f34e1570052eac83fb3e03b3e361d8d4f451abac..582b5c9107bd2513b02ba821e8d368a6f1f992b4 100644
+index f34e1570052eac83fb3e03b3e361d8d4f451abac..24d174cd346f101957fef087ff2dbe575434215e 100644
 --- a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
 +++ b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
 @@ -2615,7 +2615,7 @@ public class CraftWorld implements World {
@@ -1439,11 +1600,11 @@ index f34e1570052eac83fb3e03b3e361d8d4f451abac..582b5c9107bd2513b02ba821e8d368a6
      @Override
      public int getNoTickViewDistance() {
 -        return getHandle().getChunkProvider().playerChunkMap.getEffectiveNoTickViewDistance();
-+        return getHandle().getChunkProvider().playerChunkMap.playerChunkManager.getEffectiveNoTickViewDistance(); // Tuinity - replace old player chunk management
++        return getHandle().getChunkProvider().playerChunkMap.playerChunkManager.getTargetNoTickViewDistance(); // Tuinity - replace old player chunk management
      }
  
      @Override
-@@ -2624,7 +2624,7 @@ public class CraftWorld implements World {
+@@ -2624,11 +2624,22 @@ public class CraftWorld implements World {
              throw new IllegalArgumentException("View distance " + viewDistance + " is out of range of [2, 32]");
          }
          net.minecraft.server.PlayerChunkMap chunkMap = getHandle().getChunkProvider().playerChunkMap;
@@ -1452,3 +1613,95 @@ index f34e1570052eac83fb3e03b3e361d8d4f451abac..582b5c9107bd2513b02ba821e8d368a6
              chunkMap.setNoTickViewDistance(viewDistance);
          }
      }
+     // Paper end - per player view distance
++    // Tuinity start - add view distances
++    @Override
++    public int getSendViewDistance() {
++        return getHandle().getChunkProvider().playerChunkMap.playerChunkManager.getTargetSendDistance();
++    }
++
++    @Override
++    public void setSendViewDistance(int viewDistance) {
++        getHandle().getChunkProvider().playerChunkMap.playerChunkManager.setTargetSendDistance(viewDistance);
++    }
++    // Tuinity end - add view distances
+ 
+     // Spigot start
+     private final Spigot spigot = new Spigot()
+diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+index 7c18b22c7b93b6ca1189e481dde17476797b8fd5..b5d346e79a7ee4eb9d02fac84dc953db2a6c766d 100644
+--- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
++++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+@@ -2059,15 +2059,70 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
+         }
+     }
+ 
++    // Tuinity start - implement view distances
++    @Override
++    public int getSendViewDistance() {
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            return chunkMap.playerChunkManager.getTargetSendDistance();
++        }
++        return data.getTargetSendViewDistance();
++    }
++
++    @Override
++    public void setSendViewDistance(int viewDistance) {
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            throw new IllegalStateException("Player is not attached to world");
++        }
++
++        data.setTargetSendViewDistance(viewDistance);
++    }
++
++    @Override
++    public int getNoTickViewDistance() {
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            return chunkMap.playerChunkManager.getTargetNoTickViewDistance();
++        }
++        return data.getTargetNoTickViewDistance();
++    }
++
++    @Override
++    public void setNoTickViewDistance(int viewDistance) {
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            throw new IllegalStateException("Player is not attached to world");
++        }
++
++        data.setTargetNoTickViewDistance(viewDistance);
++    }
++
+     @Override
+     public int getViewDistance() {
+-        throw new NotImplementedException("Per-Player View Distance APIs need further understanding to properly implement (There are per world view distances though!)"); // TODO
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            return chunkMap.playerChunkManager.getTargetViewDistance();
++        }
++        return data.getTargetTickViewDistance();
+     }
+ 
+     @Override
+     public void setViewDistance(int viewDistance) {
+-        throw new NotImplementedException("Per-Player View Distance APIs need further understanding to properly implement (There are per world view distances though!)"); // TODO
++        net.minecraft.server.PlayerChunkMap chunkMap = this.getHandle().getWorldServer().getChunkProvider().playerChunkMap;
++        com.tuinity.tuinity.chunk.PlayerChunkLoader.PlayerLoaderData data = chunkMap.playerChunkManager.getData(this.getHandle());
++        if (data == null) {
++            throw new IllegalStateException("Player is not attached to world");
++        }
++
++        data.setTargetTickViewDistance(viewDistance);
+     }
++    // Tuinity end - implement view distances
+ 
+     @Override
+     public <T> T getClientOption(ClientOption<T> type) {
