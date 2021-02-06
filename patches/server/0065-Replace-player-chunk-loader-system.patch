@@ -1093,7 +1093,7 @@ index ae07ea2a34f5cd82ce2eae523359cb7540065335..de6a57577e7317de2a48b26d9e619b35
              /*
               * If it's a new world, the first few chunks are generated inside
 diff --git a/src/main/java/net/minecraft/server/ChunkMapDistance.java b/src/main/java/net/minecraft/server/ChunkMapDistance.java
-index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3d81c6858 100644
+index 7f3887b0894aca0f972922f434382646a6ad6174..5973c3a89ca5d57629376247a7636e694048a0fd 100644
 --- a/src/main/java/net/minecraft/server/ChunkMapDistance.java
 +++ b/src/main/java/net/minecraft/server/ChunkMapDistance.java
 @@ -33,7 +33,7 @@ public abstract class ChunkMapDistance {
@@ -1132,7 +1132,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
      }
  
      public void b(SectionPosition sectionposition, EntityPlayer entityplayer) {
-@@ -457,7 +457,7 @@ public abstract class ChunkMapDistance {
+@@ -458,7 +458,7 @@ public abstract class ChunkMapDistance {
          if (objectset == null || objectset.isEmpty()) { // Paper
              this.c.remove(i);
              //this.f.update(i, Integer.MAX_VALUE, false); // Paper - no longer used
@@ -1141,7 +1141,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
          }
  
      }
-@@ -476,7 +476,7 @@ public abstract class ChunkMapDistance {
+@@ -477,7 +477,7 @@ public abstract class ChunkMapDistance {
      }
  
      protected void setNoTickViewDistance(int i) { // Paper - force abi breakage on usage change
@@ -1150,7 +1150,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
      }
  
      public int b() {
-@@ -563,6 +563,7 @@ public abstract class ChunkMapDistance {
+@@ -564,6 +564,7 @@ public abstract class ChunkMapDistance {
          }
      }
  
@@ -1158,7 +1158,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
      class c extends ChunkMapDistance.b {
  
          private int e = 0;
-@@ -777,6 +778,7 @@ public abstract class ChunkMapDistance {
+@@ -778,6 +779,7 @@ public abstract class ChunkMapDistance {
              return i <= this.e - 2;
          }
      }
@@ -1167,7 +1167,7 @@ index f1c686810fb4e9c05df45d664c93af73d17f0624..f6d67d18f2525105a218da23b931acd3
      class b extends ChunkMap {
  
 diff --git a/src/main/java/net/minecraft/server/ChunkProviderServer.java b/src/main/java/net/minecraft/server/ChunkProviderServer.java
-index 38ca1c042afd41a1f660f88e398fedde00f34e39..f21901961b9febb489810aa69e97304aca4b4080 100644
+index 9e6381a60b804a957eda5b72582d5545faebcb3e..723a858da4444df2452e4f4b3cec1ef813177aa4 100644
 --- a/src/main/java/net/minecraft/server/ChunkProviderServer.java
 +++ b/src/main/java/net/minecraft/server/ChunkProviderServer.java
 @@ -912,6 +912,7 @@ public class ChunkProviderServer extends IChunkProvider {
@@ -1218,10 +1218,10 @@ index 5200b0396ee41edb42ff727c78cf3b5fce091d6b..239f504430b6c59923fd677d1be0121b
                  double deltaZ = this.locZ() - player.locZ();
                  double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
 diff --git a/src/main/java/net/minecraft/server/EntityPlayer.java b/src/main/java/net/minecraft/server/EntityPlayer.java
-index 9f5b7243ccbe0729a061345c25033d9145b91b3f..3c2f46ba0ae5e5e50297a2e1dbbb2c0d3caf4aed 100644
+index 173a210392d71cdfc551f095dc0d9c9040d22d3f..7d957ba0a1244b123f94abdc89390dfa3af5cfc1 100644
 --- a/src/main/java/net/minecraft/server/EntityPlayer.java
 +++ b/src/main/java/net/minecraft/server/EntityPlayer.java
-@@ -128,7 +128,7 @@ public class EntityPlayer extends EntityHuman implements ICrafting {
+@@ -129,7 +129,7 @@ public class EntityPlayer extends EntityHuman implements ICrafting {
  
      double lastEntitySpawnRadiusSquared; // Paper - optimise isOutsideRange, this field is in blocks
  
@@ -1663,7 +1663,7 @@ index 5af554870bcf36e47aef43b966b141b9eda6c4d5..7190316a38e6b4edf5501bfedbb12be7
          return new Vec3D((double) baseblockposition.getX() + 0.5D, (double) baseblockposition.getY() + 0.5D, (double) baseblockposition.getZ() + 0.5D);
      }
 diff --git a/src/main/java/net/minecraft/server/World.java b/src/main/java/net/minecraft/server/World.java
-index 28ee325fcc8b50397768363403823f2e3391d8c8..310733c7c277d25d64984aee5a3e98535ee59bf1 100644
+index 93c0c3376c3cb2fe416c8ae3e740ffda5f985b78..1c396a85e88e0c37c3c0ca8ac8f2437e77892f62 100644
 --- a/src/main/java/net/minecraft/server/World.java
 +++ b/src/main/java/net/minecraft/server/World.java
 @@ -515,7 +515,7 @@ public abstract class World implements GeneratorAccess, AutoCloseable {
@@ -1713,10 +1713,10 @@ index f34e1570052eac83fb3e03b3e361d8d4f451abac..24d174cd346f101957fef087ff2dbe57
      // Spigot start
      private final Spigot spigot = new Spigot()
 diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
-index 7c18b22c7b93b6ca1189e481dde17476797b8fd5..b5d346e79a7ee4eb9d02fac84dc953db2a6c766d 100644
+index ed7b91bf703c7e7d5cbe323d9ab1c299c33ebad1..9541a2fdc8d8acc521d04216b9e9f5c628d09f48 100644
 --- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
 +++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
-@@ -2059,15 +2059,70 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
+@@ -2058,15 +2058,70 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
          }
      }
  
