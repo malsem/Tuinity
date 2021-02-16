@@ -8,10 +8,10 @@ its diff here
 
 diff --git a/src/main/java/com/tuinity/tuinity/util/PoiAccess.java b/src/main/java/com/tuinity/tuinity/util/PoiAccess.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f0ff0de912687004afe8c4c009c7aeeea5f358ac
+index 0000000000000000000000000000000000000000..4e3d2d25375da76afee1ed121b38d5594b766202
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/util/PoiAccess.java
-@@ -0,0 +1,792 @@
+@@ -0,0 +1,793 @@
 +package com.tuinity.tuinity.util;
 +
 +import it.unimi.dsi.fastutil.doubles.Double2ObjectMap;
@@ -254,7 +254,11 @@ index 0000000000000000000000000000000000000000..f0ff0de912687004afe8c4c009c7aeee
 +        final int upperX = MathHelper.floor(sourcePosition.getX() + range) >> 4;
 +        final int upperZ = MathHelper.floor(sourcePosition.getZ() + range) >> 4;
 +
-+        final List<SortedChunkSectionPos> chunks = getSortedPositions(sourcePosition, (range + 15) >> 4, true);
++        // vanilla uses radius floorDiv(range, 16) + 1
++        // while at first glance it might seem OK for us to trim out an extra radius when range is a multiple of 16,
++        // we have to remember that this radius also includes Y sections, which are not
++        // immediately thrown out depending on range - only the X/Z are thrown out if they don't match range.
++        final List<SortedChunkSectionPos> chunks = getSortedPositions(sourcePosition, (range >> 4) + 1, true);
 +
 +        final int centerX = sourcePosition.getX() >> 4;
 +        final int centerY = sourcePosition.getY() >> 4;
@@ -476,7 +480,11 @@ index 0000000000000000000000000000000000000000..f0ff0de912687004afe8c4c009c7aeee
 +        final int upperX = MathHelper.floor(sourcePosition.getX() + range) >> 4;
 +        final int upperZ = MathHelper.floor(sourcePosition.getZ() + range) >> 4;
 +
-+        final List<SortedChunkSectionPos> chunks = getSortedPositions(sourcePosition, (range + 15) >> 4, true);
++        // vanilla uses radius floorDiv(range, 16) + 1
++        // while at first glance it might seem OK for us to trim out an extra radius when range is a multiple of 16,
++        // we have to remember that this radius also includes Y sections, which are not
++        // immediately thrown out depending on range - only the X/Z are thrown out if they don't match range.
++        final List<SortedChunkSectionPos> chunks = getSortedPositions(sourcePosition, (range >> 4) + 1, true);
 +
 +        final int centerX = sourcePosition.getX() >> 4;
 +        final int centerY = sourcePosition.getY() >> 4;
@@ -762,13 +770,6 @@ index 0000000000000000000000000000000000000000..f0ff0de912687004afe8c4c009c7aeee
 +                                // filter by occupancy
 +                                continue;
 +                            }
-+
-+                            // vanilla code is pretty dumb about filtering by distance: first they filter out
-+                            // so that only values in the square radius of range are returned but then they
-+                            // filter out so that the distance is in range
-+                            // but there's a catch! distanceSquared, by default, will ADD 0.5 to ONLY ONE OF the
-+                            // block position parameters (itself, in this case the poi position)! So if we want to
-+                            // maintain exact vanilla behaviour, well shit we need to play dumb as well.
 +
 +                            final BlockPosition poiPosition = poiData.getPosition();
 +
