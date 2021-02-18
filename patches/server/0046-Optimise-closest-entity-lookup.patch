@@ -57,10 +57,10 @@ index 387eeb5d770ba9fe564c61df8cc92ac8b1569f61..21e50c75e0bffaa5cc5faf6aa81ae742
  }
 diff --git a/src/main/java/com/tuinity/tuinity/world/ChunkEntitySlices.java b/src/main/java/com/tuinity/tuinity/world/ChunkEntitySlices.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f75154054d2168093ac97bb209ae67044cf5447
+index 0000000000000000000000000000000000000000..9cc14620d26d63a9e8fec7735625b22411b43e98
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/world/ChunkEntitySlices.java
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,401 @@
 +package com.tuinity.tuinity.world;
 +
 +import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
@@ -245,7 +245,7 @@ index 0000000000000000000000000000000000000000..0f75154054d2168093ac97bb209ae670
 +        }
 +
 +        public int indexOf(final E entity) {
-+            final E[] storage = (E[])this.storage;
++            final E[] storage = this.storage;
 +
 +            for (int i = 0, len = Math.min(this.storage.length, this.size); i < len; ++i) {
 +                if (storage[i] == entity) {
@@ -262,11 +262,13 @@ index 0000000000000000000000000000000000000000..0f75154054d2168093ac97bb209ae670
 +                return false;
 +            }
 +
-+            if (idx != this.size) {
-+                System.arraycopy(this.storage, idx + 1, this.storage, idx, this.size - idx - 1);
++            final int size = --this.size;
++            final E[] storage = this.storage;
++            if (idx != size) {
++                System.arraycopy(storage, idx + 1, storage, idx, size - idx);
 +            }
 +
-+            this.storage[--this.size] = null;
++            storage[size] = null;
 +
 +            return true;
 +        }
@@ -274,7 +276,6 @@ index 0000000000000000000000000000000000000000..0f75154054d2168093ac97bb209ae670
 +        public boolean has(final E entity) {
 +            return this.indexOf(entity) != -1;
 +        }
-+
 +    }
 +
 +    protected static final class EntityCollectionBySection {
@@ -583,7 +584,7 @@ index 0000000000000000000000000000000000000000..000ab23a48186d6b910c62e6922af3b8
 +    }
 +}
 diff --git a/src/main/java/net/minecraft/server/Chunk.java b/src/main/java/net/minecraft/server/Chunk.java
-index 2e25102b6d7e71b0a536e77c2116981aed8623e2..646a1a148851b13e058b41fed09deda07607a7de 100644
+index dface62144bb230c576e9eafad1016d19d211118..3f6dbba68fe7331c97c4e0fe3c8ada365970577a 100644
 --- a/src/main/java/net/minecraft/server/Chunk.java
 +++ b/src/main/java/net/minecraft/server/Chunk.java
 @@ -92,54 +92,24 @@ public class Chunk implements IChunkAccess {
