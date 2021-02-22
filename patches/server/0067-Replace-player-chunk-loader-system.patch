@@ -63,10 +63,10 @@ index 5dfa0658838c4801cdf260eae8b98163f729e5af..35810f42d7a0cd50a4cbe90e8d698fe5
  
 diff --git a/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6665b0d715f4173da466049ad9105925f9af9ed2
+index 0000000000000000000000000000000000000000..ff05688a729d8dd2ec7ea1e1a247c71892296b33
 --- /dev/null
 +++ b/src/main/java/com/tuinity/tuinity/chunk/PlayerChunkLoader.java
-@@ -0,0 +1,934 @@
+@@ -0,0 +1,951 @@
 +package com.tuinity.tuinity.chunk;
 +
 +import com.destroystokyo.paper.util.misc.PlayerAreaMap;
@@ -600,7 +600,23 @@ index 0000000000000000000000000000000000000000..6665b0d715f4173da466049ad9105925
 +            final long chunkKey = MCUtil.getCoordinateKey(queuedLoad.chunkX, queuedLoad.chunkZ);
 +
 +            final double priority = queuedLoad.priority;
-+            if (priority > 0.0) {
++            // while we do need to rate limit chunk loads, the logic for sending chunks requires that tickets are present.
++            // when chunks are loaded (i.e spawn) but do not have this player's tickets, they have to wait behind the
++            // load queue. To avoid this problem, we check early here if tickets are required to load the chunk - if they
++            // aren't required, it bypasses the limiter system.
++            boolean unloadedTargetChunk = false;
++            unloaded_check:
++            for (int dz = -1; dz <= 1; ++dz) {
++                for (int dx = -1; dx <= 1; ++dx) {
++                    final int offX = queuedLoad.chunkX + dx;
++                    final int offZ = queuedLoad.chunkZ + dz;
++                    if (this.chunkMap.world.getChunkProvider().getChunkAtIfLoadedMainThreadNoCache(offX, offZ) == null) {
++                        unloadedTargetChunk = true;
++                        break unloaded_check;
++                    }
++                }
++            }
++            if (unloadedTargetChunk && priority > 0.0) {
 +                // priority > 0.0 implies rate limited chunks
 +
 +                final int currentChunkLoads = this.concurrentChunkLoads;
@@ -630,6 +646,7 @@ index 0000000000000000000000000000000000000000..6665b0d715f4173da466049ad9105925
 +                    }
 +
 +                    if (priority > 0.0 && this.chunkTicketTracker.add(MCUtil.getCoordinateKey(offX, offZ))) {
++                        // wont reach here if unloadedTargetChunk is false
 +                        ++this.concurrentChunkLoads;
 +                    }
 +                }
@@ -1359,7 +1376,7 @@ index 3127fc9dd87e82243e167862cae83ac87b7f4fa0..13e8bfa62cd8dc1f65b07d7f617e02ae
              }
          }
 diff --git a/src/main/java/net/minecraft/server/PlayerChunkMap.java b/src/main/java/net/minecraft/server/PlayerChunkMap.java
-index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8c12e8073 100644
+index 61570ab947b5a153a4c2bcb5a09344f060e6052d..d2257ece888cb298bb05a5f0a4c6d8c9647beef8 100644
 --- a/src/main/java/net/minecraft/server/PlayerChunkMap.java
 +++ b/src/main/java/net/minecraft/server/PlayerChunkMap.java
 @@ -180,20 +180,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
@@ -1545,7 +1562,15 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
          if (entityplayer.world == this.world) {
              if (flag1 && !flag) {
                  PlayerChunk playerchunk = this.getVisibleChunk(chunkcoordintpair.pair());
-@@ -2014,7 +1926,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
+@@ -2006,6 +1918,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
+         }*/ // Paper end - replaced by distance map
+ 
+         this.updateMaps(entityplayer); // Paper - distance maps
++        this.playerChunkManager.updatePlayer(entityplayer); // Tuinity - respond to movement immediately
+ 
+     }
+ 
+@@ -2014,7 +1927,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
          // Paper start - per player view distance
          // there can be potential desync with player's last mapped section and the view distance map, so use the
          // view distance map here.
@@ -1554,7 +1579,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
  
          if (inRange == null) {
              return Stream.empty();
-@@ -2030,8 +1942,9 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
+@@ -2030,8 +1943,9 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
                      continue;
                  }
                  EntityPlayer player = (EntityPlayer)temp;
@@ -1566,7 +1591,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
  
                  int distX = Math.abs(MCUtil.getCoordinateX(lastPosition) - chunkcoordintpair.x);
                  int distZ = Math.abs(MCUtil.getCoordinateZ(lastPosition) - chunkcoordintpair.z);
-@@ -2046,6 +1959,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
+@@ -2046,6 +1960,7 @@ public class PlayerChunkMap extends IChunkLoader implements PlayerChunk.d {
                      continue;
                  }
                  EntityPlayer player = (EntityPlayer)temp;
@@ -1574,7 +1599,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
                  players.add(player);
              }
          }
-@@ -2264,6 +2178,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
+@@ -2264,6 +2179,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
              apacket[1] = new PacketPlayOutLightUpdate(chunk.getPos(), this.lightEngine, true);
  
              // Paper start - Fix MC-162253
@@ -1582,7 +1607,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
              final int lightMask = getLightMask(chunk);
              int i = 1;
              for (int x = -1; x <= 1; x++) {
-@@ -2288,10 +2203,12 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
+@@ -2288,10 +2204,12 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
                      apacket[i] = new PacketPlayOutLightUpdate(new ChunkCoordIntPair(chunk.getPos().x + x, chunk.getPos().z + z), lightEngine, updateLightMask, 0, true);
                  }
              }
@@ -1597,7 +1622,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
  
          int j = 1;
          for (int x = -1; x <= 1; x++) {
-@@ -2316,6 +2233,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
+@@ -2316,6 +2234,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
                  entityplayer.playerConnection.sendPacket(packet);
              }
          }
@@ -1605,7 +1630,7 @@ index 61570ab947b5a153a4c2bcb5a09344f060e6052d..6d1550f6943e50db1f045263f63cffe8
          // Paper end - Fix MC-162253
  
          entityplayer.a(chunk.getPos(), apacket[0], apacket[1]);
-@@ -2502,7 +2420,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
+@@ -2502,7 +2421,7 @@ Sections go from 0..16. Now whenever a section is not empty, it can potentially
                          ChunkCoordIntPair chunkcoordintpair = new ChunkCoordIntPair(this.tracker.chunkX, this.tracker.chunkZ);
                          PlayerChunk playerchunk = PlayerChunkMap.this.getVisibleChunk(chunkcoordintpair.pair());
  
